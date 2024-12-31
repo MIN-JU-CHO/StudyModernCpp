@@ -98,7 +98,7 @@ export module lib_A;
  
 namespace ns // ns is not attached to lib_A.
 {
-    export extern "C++" int f(); // f is not attached to lib_A.
+    export extern "C++" int f(); // f is not attached to lib_A. // visual studio에서는 attach 됨
            extern "C++" int g(); // g is not attached to lib_A.
     export              int h(); // h is attached to lib_A.
 }
@@ -109,26 +109,26 @@ namespace ns // ns is not attached to lib_A.
     - attach 된 이름은 모듈의 ODR(One Definition Rule) 규칙에 따라야 함. 모듈과 강하게 결합.
 - ODR(One Definition Rule)
     - 모듈에 attach된 이름은 해당 **모듈 내부**에서 **단 1번만 정의**되어야 함.
-- `extern` 디폴트: `extern “C++”`
-    - C++ 네이밍 규칙, namespace 스코프가 영향을 주고, **모듈과의 ODR 결합 방해**.
+    - 그러나 visual studio 컴파일러에서는 모듈 외부에서도 정의 가능, `export` 된 `f`와 `h` 모두 오버로딩까지 가능했다.
+- `extern “C++”`
+    - C++ 네이밍 규칙 → [네임 맹글링](https://github.com/MIN-JU-CHO/StudyModernCpp/blob/main/NameMangling.md)
 - **`f`**:
     - 정의: 모듈 내부 또는 외부 어디에서든 **한 번만 정의** 가능.
-        - `extern "C++"` 때문에 모듈에 attach되지 않으므로, 모듈 내부에 정의될 필요는 없음.
     - 사용: `lib_A`를 `import`한 모든 곳에서 사용 가능.
 - **`g`**:
-    - 정의: 모듈 내부 또는 외부 어디에서든 **한 번만 정의** 가능.
+    - 정의: 모듈 내부에서만 **한 번만 정의** 가능. (← 외부에서 정의 불가능으로 내용 수정)
     - 사용: **모듈 내부에서만 사용 가능**.
         - 주의: `export`가 없으므로 `import`로 사용 불가능
 - **`h`**:
-    - 정의: ODR 규칙에 따라 **모듈 내부**에서 정의(`ns` 네임스페이스 안에서, 혹은 `ns::h`)되어야 하며, 다른 번역 단위에서 재정의(overload 포함) 불가.
+    - 정의: ~~ODR 규칙에 따라 **모듈 내부**에서 정의(`ns` 네임스페이스 안에서, 혹은 `ns::h`)되어야 하며, 다른 번역 단위에서 재정의(overload 포함) 불가.~~ → `extern “C”`가 default 값이 아니므로 이 설명은 틀렸었다.
+    - 정의: `f`와 똑같이 모듈 내부 또는 외부 어디에서든 **한 번만 정의** 가능.
     - 사용: `lib_A`를 `import`한 모든 곳에서 사용 가능.
 
 | 이름 | 정의 위치 조건 | 사용 가능 범위 |
 | --- | --- | --- |
 | `f` | 모듈 내부/외부 어디서든 가능 | **모듈 외부에서도 사용 가능** |
-| `g` | 모듈 내부/외부 어디서든 가능 | **모듈 내부에서만 사용 가능** |
-| `h` | 모듈 내부의 `ns` 안에서 정의
-모듈 내부 `ns::h` 로 정의 | **모듈 외부에서도 사용 가능** |
+| `g` | 모듈 내부에서만 가능 | **모듈 내부에서만 사용 가능** |
+| `h` | 모듈 내부/외부 어디서든 가능 | **모듈 외부에서도 사용 가능** |
 
 ## 3. Internal Linkage
 
@@ -180,6 +180,59 @@ namespace ns // ns is not attached to lib_A.
         
 - [익명 네임스페이스](https://github.com/MIN-JU-CHO/StudyModernCpp/blob/main/UnnamedNamespace.md)
 - 익명 네임스페이스 내의 네임스페이스 (`extern`을 명시하더라도 결국 익명에 감싸지니까)
+
+### 함수 정의를 internal linkage로 수정해야하는 경우
+
+```cpp
+#pragma once
+class Cat
+{
+public:
+		void speak();
+private:
+		// void bye();
+}
+```
+
+```cpp
+#include "cat.h"
+#include <iostream>
+
+static void bye()
+{
+		std::cout << "bye\n";
+}
+
+void Cat::speak()
+{
+		std::cout << "meow\n";
+		bye();
+}
+```
+
+- `bye()` 함수가 cat.obj 안에서만 호출되는 함수라면 (클래스 인스턴스와 직접 연관이 없는 함수라면), 클래스의 private 함수가 아닌 **cat.obj 안에서의 internal linkage**로만 설정되도록 `static` 전역 함수로 정의하는 것이 낫다.
+- `static` 전역 함수 정의 방법 뿐만 아니라 `unnamed namespace`로 internal linkage를 만드는 방법도 있다.
+    - name mangling 방식 외에는 큰 차이는 없지만, `unnamed namespace`를 권장
+    
+    ```cpp
+    #include "cat.h"
+    #include <iostream>
+    
+    namespace {
+    		void bye()
+    		{
+    				std::cout << "bye\n";
+    		}
+    }
+    
+    void Cat::speak()
+    {
+    		std::cout << "meow\n";
+    		bye();
+    }
+    ```
+    
+- `static`이나 `unnamed namespace` 등으로 internal linkage로 설정하지 않으면 외부에서 link가 가능하게 되어, 링크 단계에서의 충돌 혹은 원하지 않는 함수로의 링크 현상 등이 나타날 수 있음
 
 ## 4. No Linkage
 
